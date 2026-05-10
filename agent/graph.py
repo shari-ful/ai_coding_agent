@@ -3,10 +3,12 @@ from langchain_groq import ChatGroq
 from langgraph.graph import StateGraph
 from langgraph.constants import END
 from langchain.agents import create_agent
+from langchain_core.messages import HumanMessage, SystemMessage
 from agent.prompts import planner_prompt, architecture_prompt, code_generation_prompt
-from agent.states import Plan, TaskPlan, CoderState
+from agent.states import Plan, TaskPlan, CoderState, ImplementationTask
 from agent.tools import read_file, write_file, list_files, get_current_directory
-
+import json
+import re
 
 
 load_dotenv()
@@ -14,9 +16,39 @@ load_dotenv()
 llm = ChatGroq(model="openai/gpt-oss-120b")
 
 
+def parse_json_from_text(text: str) -> dict:
+    """Extract and parse JSON from text response."""
+    # Try to find JSON object in the response
+    json_match = re.search(r'\{[\s\S]*\}', text)
+    if json_match:
+        try:
+            return json.loads(json_match.group(0))
+        except json.JSONDecodeError:
+            pass
+    
+    # If no JSON found, raise error
+    raise ValueError(f"Could not parse JSON from response: {text[:300]}")
+
+
 def planner_agent(state: dict) -> dict:
     user_prompt = state["user_prompt"]
-    resp = llm.with_structured_output(Plan).invoke(planner_prompt(user_prompt))
+    
+    messages = [
+        SystemMessage(content=planner_prompt(user_prompt)),
+        HumanMessage(content="Return your response as a valid JSON object with: name, description, techstack (list), features (list), files (list of objects with path and purpose).")
+    ]
+    
+    response = llm.invoke(messages)
+    
+    try:
+        plan_dict = parse_json_from_text(response.content)
+        # Convert files to proper format
+        if "files" in plan_dict:
+            from agent.states import File
+            plan_dict["files"] = [File(**f) if isinstance(f, dict) else f for f in plan_dict["files"]]
+        resp = Plan(**plan_dict)
+    except Exception as e:
+        raise ValueError(f"Planner agent failed to generate valid plan: {str(e)}")
 
     if not resp:
         raise ValueError("Planner agent failed to generate a plan.")
@@ -26,7 +58,25 @@ def planner_agent(state: dict) -> dict:
 
 def architecture_agent(state: dict) -> dict:
     plan: Plan = state["plan"]
-    resp = llm.with_structured_output(TaskPlan).invoke(architecture_prompt(plan=plan.model_dump_json()))
+    
+    messages = [
+        SystemMessage(content=architecture_prompt(plan=plan.model_dump_json())),
+        HumanMessage(content="Return the implementation tasks as a valid JSON object with 'implementation_steps' array. Each step must have 'filepath' and 'task_description'.")
+    ]
+    
+    response = llm.invoke(messages)
+    
+    try:
+        task_plan_dict = parse_json_from_text(response.content)
+        # Convert tasks to proper format
+        if "implementation_steps" in task_plan_dict:
+            task_plan_dict["implementation_steps"] = [
+                ImplementationTask(**t) if isinstance(t, dict) else t 
+                for t in task_plan_dict["implementation_steps"]
+            ]
+        resp = TaskPlan(**task_plan_dict)
+    except Exception as e:
+        raise ValueError(f"Architecture agent failed to parse tasks: {str(e)}")
 
     if not resp:
         raise ValueError("Architecture agent failed to generate implementation tasks.")
@@ -81,4 +131,5 @@ if __name__ == "__main__":
     result = agent.invoke({"user_prompt": "Build a colourful modern todo app in html css and js"},
                           {"recursion_limit": 100})
     print("Final State:", result)
+
 
