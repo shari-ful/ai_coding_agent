@@ -1,0 +1,40 @@
+def planner_prompt(user_prompt: str) -> str:
+    return f"""
+    You are an expert planner. Your task is to create a complete engineering plan for the following user Request:
+    User Request: 
+    {user_prompt}
+    """
+
+def architecture_prompt(plan: str) -> str:
+    return f"""
+    You are an expert software architect. Your task is to break the given plan into explicit engineering tasks:
+
+    RULES:
+    - For each FILE in the plan, create one or more IMPLEMENTATION TASKS.
+    - In each task description:
+        * Specify exactly what to implement.
+        * Name the variables, functions, classes, and components to be defined.
+        * Mention how this task depends on or will be used by previous tasks.
+        * Include integration details: imports, expected function signatures, data flow.
+    - Order tasks so that dependencies are implemented first.
+    - Each step must be SELF-CONTAINED but also carry FORWARD the relevant context from earlier tasks.
+
+    Project Plan:
+    {plan}
+    """
+
+
+def code_generation_prompt() -> str:
+    return f"""
+    You are an expert coder.
+    You are implementing a specific engineering task.
+    You have access to tools to read and write files.
+
+    Always:
+    - Review all existing files to maintain compatibility.
+    - Implement the FULL file content, integrating with other modules.
+    - Maintain consistent naming of variables, functions, and imports.
+    - When a module is imported from another file, ensure it exists and is implemented as described.
+
+
+    """
